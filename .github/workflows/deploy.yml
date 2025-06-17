@@ -45,14 +45,14 @@ jobs:
     - name: Cleanup existing deployment
       run: |
         echo "Cleaning up existing containers for ${{ matrix.environment }}..."
-        docker-compose -p demo-${{ matrix.environment }} down --remove-orphans || true
+        docker compose -p demo-${{ matrix.environment }} down --remove-orphans || true
         docker system prune -f || true
         
     - name: Build and deploy
       run: |
         echo "Building and deploying to ${{ matrix.environment }}..."
         
-        # Set environment variables for docker-compose
+        # Set environment variables for docker compose
         export ENVIRONMENT=${{ matrix.environment }}
         export DEPLOY_TIME="${{ env.DEPLOY_TIME }}"
         export GIT_COMMIT="${{ env.GIT_COMMIT }}"
@@ -74,7 +74,7 @@ jobs:
         fi
         
         # Deploy with compose
-        docker-compose $COMPOSE_FILES -p demo-${{ matrix.environment }} up -d --build
+        docker compose $COMPOSE_FILES -p demo-${{ matrix.environment }} up -d --build
         
     - name: Verify deployment
       run: |
@@ -84,7 +84,7 @@ jobs:
         sleep 10
         
         # Get container info
-        docker-compose -p demo-${{ matrix.environment }} ps
+        docker compose -p demo-${{ matrix.environment }} ps
         
         # Load environment to get the port
         export ENVIRONMENT=${{ matrix.environment }}
