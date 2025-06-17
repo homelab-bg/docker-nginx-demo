@@ -1,0 +1,28 @@
+---
+
+services:
+  demo-nginx:
+    build: ./docker
+    container_name: demo-nginx-${ENVIRONMENT:-dev}
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - APP_VERSION=${APP_VERSION:-dev}
+      - SERVER_NAME=${SERVER_NAME:-localhost}
+      - DEPLOYMENT_HOST=${DEPLOYMENT_HOST:-local}
+      - DEPLOY_TIME=${DEPLOY_TIME}
+      - GIT_COMMIT=${GIT_COMMIT:-unknown}
+      - CACHE_DURATION=${CACHE_DURATION:-1h}
+      - BACKGROUND_COLOR=${BACKGROUND_COLOR:-#667eea}
+      - TEXT_COLOR=${TEXT_COLOR:-#333}
+      - FEATURE_MESSAGE=${FEATURE_MESSAGE:-Default development environment}
+    restart: unless-stopped
+    labels:
+      - "demo.environment=${ENVIRONMENT}"
+      - "demo.version=${APP_VERSION}"
+      - "demo.deployed-by=github-actions"
+
+networks:
+  default:
+    name: demo-network-${ENVIRONMENT:-dev}
