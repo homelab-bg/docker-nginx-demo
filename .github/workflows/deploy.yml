@@ -23,7 +23,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, local]
+    runs-on: [self-hosted, local, docker]
     
     strategy:
       matrix:
