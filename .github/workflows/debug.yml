@@ -76,17 +76,42 @@ jobs:
         # Deploy with compose
         docker compose $COMPOSE_FILES -p demo-${{ matrix.environment }} up -d --build
         
-    - name: Verify deployment
+    - name: Wait for container
       run: |
-        echo "Verifying deployment..."
-        
-        # Wait for container to be ready
-        echo "Waiting for container startup..."
+        echo "Waiting for container to be ready..."
         sleep 15
         
-        # Get container info
+    - name: Check container status
+      run: |
         echo "=== Container Status ==="
         docker compose -p demo-${{ matrix.environment }} ps
+        
+    - name: Check container logs
+      run: |
+        echo "=== Container Logs ==="
+        docker compose -p demo-${{ matrix.environment }} logs demo-nginx
+        
+    - name: Test from inside container
+      run: |
+        echo "=== Testing from inside container ==="
+        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx wget -q -O - http://localhost/health || echo "Internal test failed"
+        
+    - name: Check port binding
+      run: |
+        echo "=== Port Status ==="
+        netstat -tlnp | grep :8080 || echo "Port 8080 not found"
+        
+        echo "=== Docker Port Mapping ==="
+        docker port $(docker compose -p demo-${{ matrix.environment }} ps -q demo-nginx) || echo "No port mapping found"
+        
+    - name: Simple curl test
+      run: |
+        echo "=== Simple Curl Test ==="
+        curl -v http://localhost:8080/health || echo "Curl test failed"
+        
+    - name: Verify deployment
+      run: |
+        echo "Final verification..."
         
         # Get the port from environment file
         NGINX_PORT=8080  # Default port
@@ -99,99 +124,32 @@ jobs:
         
         echo "Using port: $NGINX_PORT"
         
-        # Test health endpoint from inside the container first
-        echo "=== Internal Health Check ==="
-        if docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx wget -q -O - http://localhost/health; then
-          echo "✅ Internal health check successful"
+        # Simple health check with timeout
+        if timeout 10 curl -f http://localhost:$NGINX_PORT/health; then
+          echo "Health check successful!"
         else
-          echo "❌ Internal health check failed"
-          docker compose -p demo-${{ matrix.environment }} logs demo-nginx
-          exit 1
-        fi
-        
-        # Test health endpoint from host using Docker network
-        echo "=== External Health Check ==="
-        
-        # Method 1: Try from host (this should work since you confirmed it works manually)
-        if curl -f -m 10 --retry 3 --retry-delay 2 http://host.docker.internal:$NGINX_PORT/health 2>/dev/null; then
-          echo "✅ Health check successful via host.docker.internal"
-          HEALTH_URL="http://host.docker.internal:$NGINX_PORT"
-        # Method 2: Get container IP and test directly
-        elif CONTAINER_IP=$(docker inspect $(docker compose -p demo-${{ matrix.environment }} ps -q demo-nginx) --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}') && \
-             curl -f -m 10 http://$CONTAINER_IP/health; then
-          echo "✅ Health check successful via container IP: $CONTAINER_IP"
-          HEALTH_URL="http://$CONTAINER_IP"
-        # Method 3: Connect to the same network as the container
-        elif docker run --rm --network demo-network-${{ matrix.environment }} curlimages/curl:latest curl -f -m 10 http://demo-nginx-${{ matrix.environment }}/health; then
-          echo "✅ Health check successful via container network"
-          HEALTH_URL="http://demo-nginx-${{ matrix.environment }}"
-        else
-          echo "❌ All health check methods failed"
-          echo "=== Debug Information ==="
-          echo "Container logs:"
-          docker compose -p demo-${{ matrix.environment }} logs demo-nginx
-          echo "Container inspect:"
-          docker inspect $(docker compose -p demo-${{ matrix.environment }} ps -q demo-nginx)
-          echo "Network information:"
-          docker network ls
+          echo "Health check failed"
           exit 1
         fi
         
         # Test info endpoint
-        echo "=== Testing Info Endpoint ==="
-        if docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx wget -q -O - http://localhost/info; then
-          echo "✅ Info endpoint successful"
+        if timeout 10 curl -f http://localhost:$NGINX_PORT/info; then
+          echo "Info endpoint successful!"
         else
-          echo "❌ Info endpoint failed"
+          echo "Info endpoint failed"
           exit 1
         fi
         
-        echo "✅ Deployment verification successful!"
-        echo "🌐 Application available at: http://$(hostname):$NGINX_PORT"
-        echo "🏥 Health check: $HEALTH_URL/health"
-        echo "📋 Info endpoint: $HEALTH_URL/info"
-        
-    - name: Tag successful deployment
-      if: success() && github.event_name == 'push'
-      run: |
-        echo "Tagging successful deployment..."
-        
-        # Create deployment tag
-        DEPLOYMENT_TAG="deploy-${{ matrix.environment }}-$(date +%Y%m%d-%H%M%S)"
-        
-        # Log deployment details
-        echo "Deployment Details:" >> deployment.log
-        echo "Environment: ${{ matrix.environment }}" >> deployment.log
-        echo "Commit: ${{ env.GIT_COMMIT }}" >> deployment.log
-        echo "Time: ${{ env.DEPLOY_TIME }}" >> deployment.log
-        echo "Tag: $DEPLOYMENT_TAG" >> deployment.log
-        echo "Runner: $(hostname)" >> deployment.log
-        echo "---" >> deployment.log
-        
-        echo "Deployment tagged as: $DEPLOYMENT_TAG"
+        echo "Deployment verification successful!"
+        echo "Application available at: http://localhost:$NGINX_PORT"
         
     - name: Deployment summary
       if: always()
       run: |
-        echo "🚀 Deployment Summary"
-        echo "===================="
+        echo "Deployment Summary"
+        echo "=================="
         echo "Environment: ${{ matrix.environment }}"
         echo "Status: ${{ job.status }}"
         echo "Commit: ${{ env.GIT_COMMIT }}"
         echo "Time: ${{ env.DEPLOY_TIME }}"
         echo "Runner: $(hostname)"
-        
-        if [ "${{ job.status }}" = "success" ]; then
-          # Get port safely
-          NGINX_PORT=8080  # Default
-          if [ -f ".env.${{ matrix.environment }}" ]; then
-            ENV_PORT=$(grep "^NGINX_PORT=" .env.${{ matrix.environment }} | cut -d'=' -f2 | tr -d ' "'"'" || echo "")
-            if [ -n "$ENV_PORT" ]; then
-              NGINX_PORT=$ENV_PORT
-            fi
-          fi
-          
-          echo "🌐 Access your app: http://$(hostname):$NGINX_PORT"
-          echo "🏥 Health check: http://$(hostname):$NGINX_PORT/health"
-          echo "📋 Info endpoint: http://$(hostname):$NGINX_PORT/info"
-        fi
