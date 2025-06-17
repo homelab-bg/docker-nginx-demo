@@ -3,22 +3,24 @@
 services:
   demo-nginx:
     build:
-      context: . 
-      dockerfile: docker/Dockerfile 
+      context: .
+      dockerfile: docker/Dockerfile
     container_name: demo-nginx-${ENVIRONMENT:-dev}
     ports:
       - "${NGINX_PORT:-8080}:80"
     env_file:
       - .env.${ENVIRONMENT:-dev}
     environment:
-      # Override with workflow-specific vars
+      # Override with workflow-specific vars (these take precedence over env_file)
       - DEPLOY_TIME=${DEPLOY_TIME}
       - GIT_COMMIT=${GIT_COMMIT:-unknown}
       - APP_VERSION=${APP_VERSION:-dev}
+      # Ensure ENVIRONMENT is always set
+      - ENVIRONMENT=${ENVIRONMENT:-dev}
     restart: unless-stopped
     labels:
-      - "demo.environment=${ENVIRONMENT}"
-      - "demo.version=${APP_VERSION}"
+      - "demo.environment=${ENVIRONMENT:-dev}"
+      - "demo.version=${APP_VERSION:-dev}"
       - "demo.deployed-by=github-actions"
 
 networks:
