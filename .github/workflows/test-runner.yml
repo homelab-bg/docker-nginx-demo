@@ -1,4 +1,3 @@
-# .github/workflows/test-runner.yml
 name: Test Runner Connection
 
 on:
