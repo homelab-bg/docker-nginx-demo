@@ -64,6 +64,8 @@ jobs:
           cp .env.example .env.${{ matrix.environment }}
         else
           echo "Using environment file: .env.${{ matrix.environment }}"
+          echo "Environment file contents:"
+          cat .env.${{ matrix.environment }}
         fi
         
         # Determine compose files to use
@@ -73,8 +75,8 @@ jobs:
           echo "Using override file: docker-compose.${{ matrix.environment }}.yml"
         fi
         
-        # Deploy with compose
-        docker compose $COMPOSE_FILES -p demo-${{ matrix.environment }} up -d --build
+        # Deploy with compose using the same method that works manually
+        docker compose --env-file .env.${{ matrix.environment }} $COMPOSE_FILES -p demo-${{ matrix.environment }} up -d --build
         
     - name: Wait for container startup
       run: |
@@ -94,49 +96,9 @@ jobs:
         echo "Giving nginx additional time to initialize..."
         sleep 10
         
-    - name: Check container status and logs
+    - name: Get deployment port
+      id: get_port
       run: |
-        echo "=== Container Status ==="
-        docker compose -p demo-${{ matrix.environment }} ps
-        
-        echo "=== Recent Container Logs ==="
-        docker compose -p demo-${{ matrix.environment }} logs --tail=20 demo-nginx
-        
-    - name: Debug nginx inside container
-      run: |
-        echo "=== Nginx Process Check ==="
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx ps aux | grep nginx || echo "No nginx processes found"
-        
-        echo "=== Nginx Configuration Test ==="
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx nginx -t || echo "Nginx config test failed"
-        
-        echo "=== Check Generated Files ==="
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx ls -la /etc/nginx/conf.d/ || echo "Config dir check failed"
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx ls -la /usr/share/nginx/html/ || echo "HTML dir check failed"
-        
-        echo "=== Port Listening Check ==="
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx netstat -tlnp || echo "Netstat failed"
-        
-    - name: Test internal connectivity
-      run: |
-        echo "=== Internal Connectivity Tests ==="
-        
-        # Test if we can connect to port 80 inside container
-        echo "Testing port 80 connectivity..."
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx sh -c "echo 'GET /health HTTP/1.0\r\n\r\n' | nc localhost 80" || echo "Port 80 connection failed"
-        
-        # Test with curl (more verbose)
-        echo "Testing with curl..."
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx curl -v http://localhost/health || echo "Curl test failed"
-        
-        # Test the basic index page
-        echo "Testing index page..."
-        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx curl -v http://localhost/ || echo "Index page test failed"
-        
-    - name: Test external connectivity
-      run: |
-        echo "=== External Connectivity Tests ==="
-        
         # Get the port from environment file
         NGINX_PORT=8080  # Default port
         if [ -f ".env.${{ matrix.environment }}" ]; then
@@ -146,6 +108,33 @@ jobs:
           fi
         fi
         
+        echo "Detected port: $NGINX_PORT"
+        echo "nginx_port=$NGINX_PORT" >> $GITHUB_OUTPUT
+        
+    - name: Check container status and logs
+      run: |
+        echo "=== Container Status ==="
+        docker compose -p demo-${{ matrix.environment }} ps
+        
+        echo "=== Recent Container Logs ==="
+        docker compose -p demo-${{ matrix.environment }} logs --tail=20 demo-nginx
+        
+        echo "=== Port Mapping Check ==="
+        docker port $(docker compose -p demo-${{ matrix.environment }} ps -q demo-nginx) || echo "No port mapping found"
+        
+    - name: Test internal connectivity
+      run: |
+        echo "=== Internal Connectivity Tests ==="
+        
+        # Test with curl (more verbose)
+        echo "Testing with curl..."
+        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx curl -v http://localhost/health || echo "Curl test failed"
+        
+    - name: Test external connectivity
+      run: |
+        echo "=== External Connectivity Tests ==="
+        
+        NGINX_PORT=${{ steps.get_port.outputs.nginx_port }}
         echo "Using port: $NGINX_PORT"
         
         # Check if port is bound on host
@@ -162,7 +151,7 @@ jobs:
           curl -v -m 10 http://$CONTAINER_IP/health || echo "Container IP test failed"
         fi
         
-        # Test via host network (this should work since you confirmed manual access works)
+        # Test via host network
         echo "Testing via host network..."
         curl -v -m 10 http://127.0.0.1:$NGINX_PORT/health || echo "Host network test failed"
         
@@ -170,15 +159,7 @@ jobs:
       run: |
         echo "=== Final Verification ==="
         
-        # Get the port from environment file
-        NGINX_PORT=8080  # Default port
-        if [ -f ".env.${{ matrix.environment }}" ]; then
-          ENV_PORT=$(grep "^NGINX_PORT=" .env.${{ matrix.environment }} | cut -d'=' -f2 | tr -d ' "'"'" || echo "")
-          if [ -n "$ENV_PORT" ]; then
-            NGINX_PORT=$ENV_PORT
-          fi
-        fi
-        
+        NGINX_PORT=${{ steps.get_port.outputs.nginx_port }}
         echo "Final verification using port: $NGINX_PORT"
         
         # Try internal test first
@@ -203,6 +184,11 @@ jobs:
         if [ "$INTERNAL_SUCCESS" = "true" ] || [ "$EXTERNAL_SUCCESS" = "true" ]; then
           echo "✅ Deployment verification successful!"
           echo "🌐 Application available at: http://$(hostname):$NGINX_PORT"
+          
+          # Test info endpoint too
+          if curl -f -m 5 http://127.0.0.1:$NGINX_PORT/info >/dev/null 2>&1; then
+            echo "✅ Info endpoint also working"
+          fi
         else
           echo "❌ Both internal and external tests failed"
           echo "=== Final Debug Dump ==="
@@ -222,15 +208,7 @@ jobs:
         echo "Runner: $(hostname)"
         
         if [ "${{ job.status }}" = "success" ]; then
-          # Get port safely
-          NGINX_PORT=8080  # Default
-          if [ -f ".env.${{ matrix.environment }}" ]; then
-            ENV_PORT=$(grep "^NGINX_PORT=" .env.${{ matrix.environment }} | cut -d'=' -f2 | tr -d ' "'"'" || echo "")
-            if [ -n "$ENV_PORT" ]; then
-              NGINX_PORT=$ENV_PORT
-            fi
-          fi
-          
+          NGINX_PORT=${{ steps.get_port.outputs.nginx_port }}
           echo "🌐 Access your app: http://$(hostname):$NGINX_PORT"
           echo "🏥 Health check: http://$(hostname):$NGINX_PORT/health"
           echo "📋 Info endpoint: http://$(hostname):$NGINX_PORT/info"
