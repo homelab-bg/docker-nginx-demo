@@ -31,55 +31,54 @@ jobs:
           - ${{ github.event.inputs.environment || (github.event_name == 'pull_request' && 'dev' || 'prod-blue') }}
     
     steps:
-    - name: 🏁 Checkout code
+    - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: 🔍 Display deployment info
+    - name: Display deployment info
       run: |
-        echo "🚀 Deploying to environment: ${{ matrix.environment }}"
-        echo "📦 Git commit: ${{ env.GIT_COMMIT }}"
-        echo "🕐 Deploy time: ${{ env.DEPLOY_TIME }}"
-        echo "🏃‍♂️ Triggered by: ${{ github.event_name }}"
-        echo "🌍 Runner hostname: $(hostname)"
+        echo "Deploying to environment: ${{ matrix.environment }}"
+        echo "Git commit: ${{ env.GIT_COMMIT }}"
+        echo "Deploy time: ${{ env.DEPLOY_TIME }}"
+        echo "Triggered by: ${{ github.event_name }}"
+        echo "Runner hostname: $(hostname)"
         
-    - name: 🧹 Cleanup existing deployment
+    - name: Cleanup existing deployment
       run: |
-        echo "🧹 Cleaning up existing containers for ${{ matrix.environment }}..."
+        echo "Cleaning up existing containers for ${{ matrix.environment }}..."
         docker-compose -p demo-${{ matrix.environment }} down --remove-orphans || true
         docker system prune -f || true
         
-    - name: 🏗️ Build and deploy
+    - name: Build and deploy
       run: |
-        echo "🏗️ Building and deploying to ${{ matrix.environment }}..."
+        echo "Building and deploying to ${{ matrix.environment }}..."
         
-        # Set environment variables
+        # Set environment variables for docker-compose
+        export ENVIRONMENT=${{ matrix.environment }}
         export DEPLOY_TIME="${{ env.DEPLOY_TIME }}"
         export GIT_COMMIT="${{ env.GIT_COMMIT }}"
         export APP_VERSION="${{ github.ref_name }}-${{ github.run_number }}"
         
-        # Load environment-specific variables
-        if [ -f ".env.${{ matrix.environment }}" ]; then
-          set -a
-          source .env.${{ matrix.environment }}
-          set +a
-          echo "✅ Loaded environment file: .env.${{ matrix.environment }}"
+        # Check if env file exists
+        if [ ! -f ".env.${{ matrix.environment }}" ]; then
+          echo "Environment file .env.${{ matrix.environment }} not found, using defaults"
+          cp .env.example .env.${{ matrix.environment }}
         else
-          echo "⚠️ Environment file .env.${{ matrix.environment }} not found, using defaults"
+          echo "Using environment file: .env.${{ matrix.environment }}"
         fi
         
         # Determine compose files to use
         COMPOSE_FILES="-f docker-compose.yml"
         if [ -f "docker-compose.${{ matrix.environment }}.yml" ]; then
           COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.${{ matrix.environment }}.yml"
-          echo "✅ Using override file: docker-compose.${{ matrix.environment }}.yml"
+          echo "Using override file: docker-compose.${{ matrix.environment }}.yml"
         fi
         
         # Deploy with compose
         docker-compose $COMPOSE_FILES -p demo-${{ matrix.environment }} up -d --build
         
-    - name: 🔍 Verify deployment
+    - name: Verify deployment
       run: |
-        echo "🔍 Verifying deployment..."
+        echo "Verifying deployment..."
         
         # Wait for container to be ready
         sleep 10
@@ -87,33 +86,34 @@ jobs:
         # Get container info
         docker-compose -p demo-${{ matrix.environment }} ps
         
-        # Get the port from environment or default
+        # Load environment to get the port
+        export ENVIRONMENT=${{ matrix.environment }}
         if [ -f ".env.${{ matrix.environment }}" ]; then
-          source .env.${{ matrix.environment }}
+          export $(grep -v '^#' .env.${{ matrix.environment }} | grep -v '^$' | xargs)
         fi
         PORT=${NGINX_PORT:-8080}
         
         # Test health endpoint
-        echo "🏥 Testing health endpoint..."
-        curl -f http://localhost:$PORT/health || (echo "❌ Health check failed" && exit 1)
+        echo "Testing health endpoint..."
+        curl -f http://localhost:$PORT/health || (echo "Health check failed" && exit 1)
         
         # Test info endpoint
-        echo "📋 Testing info endpoint..."
-        curl -f http://localhost:$PORT/info || (echo "❌ Info endpoint failed" && exit 1)
+        echo "Testing info endpoint..."
+        curl -f http://localhost:$PORT/info || (echo "Info endpoint failed" && exit 1)
         
-        echo "✅ Deployment verification successful!"
-        echo "🌐 Application available at: http://localhost:$PORT"
+        echo "Deployment verification successful!"
+        echo "Application available at: http://localhost:$PORT"
         
-    - name: 🏷️ Tag successful deployment
+    - name: Tag successful deployment
       if: success() && github.event_name == 'push'
       run: |
-        echo "🏷️ Tagging successful deployment..."
+        echo "Tagging successful deployment..."
         
         # Create deployment tag
         DEPLOYMENT_TAG="deploy-${{ matrix.environment }}-$(date +%Y%m%d-%H%M%S)"
         
         # Log deployment details
-        echo "📝 Deployment Details:" >> deployment.log
+        echo "Deployment Details:" >> deployment.log
         echo "Environment: ${{ matrix.environment }}" >> deployment.log
         echo "Commit: ${{ env.GIT_COMMIT }}" >> deployment.log
         echo "Time: ${{ env.DEPLOY_TIME }}" >> deployment.log
@@ -121,13 +121,13 @@ jobs:
         echo "Runner: $(hostname)" >> deployment.log
         echo "---" >> deployment.log
         
-        echo "✅ Deployment tagged as: $DEPLOYMENT_TAG"
+        echo "Deployment tagged as: $DEPLOYMENT_TAG"
         
-    - name: 📊 Deployment summary
+    - name: Deployment summary
       if: always()
       run: |
-        echo "📊 Deployment Summary"
-        echo "===================="
+        echo "Deployment Summary"
+        echo "=================="
         echo "Environment: ${{ matrix.environment }}"
         echo "Status: ${{ job.status }}"
         echo "Commit: ${{ env.GIT_COMMIT }}"
@@ -135,11 +135,12 @@ jobs:
         echo "Runner: $(hostname)"
         
         if [ "${{ job.status }}" = "success" ]; then
+          export ENVIRONMENT=${{ matrix.environment }}
           if [ -f ".env.${{ matrix.environment }}" ]; then
-            source .env.${{ matrix.environment }}
+            export $(grep -v '^#' .env.${{ matrix.environment }} | grep -v '^$' | xargs)
           fi
           PORT=${NGINX_PORT:-8080}
-          echo "🌐 Access your app: http://localhost:$PORT"
-          echo "🏥 Health check: http://localhost:$PORT/health"
-          echo "📋 Info endpoint: http://localhost:$PORT/info"
+          echo "Access your app: http://localhost:$PORT"
+          echo "Health check: http://localhost:$PORT/health"
+          echo "Info endpoint: http://localhost:$PORT/info"
         fi
