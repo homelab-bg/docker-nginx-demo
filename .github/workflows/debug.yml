@@ -1,0 +1,203 @@
+name: Deploy Demo Nginx App
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - prod-blue
+        - prod-green
+
+env:
+  DEPLOY_TIME: ${{ github.event.head_commit.timestamp || github.run_id }}
+  GIT_COMMIT: ${{ github.sha }}
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, local, docker]
+    
+    strategy:
+      matrix:
+        environment: 
+          - ${{ github.event.inputs.environment || (github.event_name == 'pull_request' && 'dev' || 'prod-blue') }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Display deployment info
+      run: |
+        echo "Deploying to environment: ${{ matrix.environment }}"
+        echo "Git commit: ${{ env.GIT_COMMIT }}"
+        echo "Deploy time: ${{ env.DEPLOY_TIME }}"
+        echo "Triggered by: ${{ github.event_name }}"
+        echo "Runner hostname: $(hostname)"
+        
+    - name: Cleanup existing deployment
+      run: |
+        echo "Cleaning up existing containers for ${{ matrix.environment }}..."
+        docker compose -p demo-${{ matrix.environment }} down --remove-orphans || true
+        docker system prune -f || true
+        
+    - name: Build and deploy
+      run: |
+        echo "Building and deploying to ${{ matrix.environment }}..."
+        
+        # Set environment variables for docker compose
+        export ENVIRONMENT=${{ matrix.environment }}
+        export DEPLOY_TIME="${{ env.DEPLOY_TIME }}"
+        export GIT_COMMIT="${{ env.GIT_COMMIT }}"
+        export APP_VERSION="${{ github.ref_name }}-${{ github.run_number }}"
+        
+        # Check if env file exists
+        if [ ! -f ".env.${{ matrix.environment }}" ]; then
+          echo "Environment file .env.${{ matrix.environment }} not found, using defaults"
+          cp .env.example .env.${{ matrix.environment }}
+        else
+          echo "Using environment file: .env.${{ matrix.environment }}"
+          echo "Environment file contents:"
+          cat .env.${{ matrix.environment }}
+        fi
+        
+        # Determine compose files to use
+        COMPOSE_FILES="-f docker-compose.yml"
+        if [ -f "docker-compose.${{ matrix.environment }}.yml" ]; then
+          COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.${{ matrix.environment }}.yml"
+          echo "Using override file: docker-compose.${{ matrix.environment }}.yml"
+        fi
+        
+        # Deploy with compose
+        docker compose $COMPOSE_FILES -p demo-${{ matrix.environment }} up -d --build
+        
+    - name: Verify deployment
+      run: |
+        echo "Verifying deployment..."
+        
+        # Get container info immediately
+        echo "=== Container Status ==="
+        docker compose -p demo-${{ matrix.environment }} ps
+        
+        # Check container logs for any startup issues
+        echo "=== Container Logs ==="
+        docker compose -p demo-${{ matrix.environment }} logs demo-nginx
+        
+        # Get the port from environment file using safer parsing
+        NGINX_PORT=8080  # Default port
+        if [ -f ".env.${{ matrix.environment }}" ]; then
+          # Safely extract NGINX_PORT from env file
+          ENV_PORT=$(grep "^NGINX_PORT=" .env.${{ matrix.environment }} | cut -d'=' -f2 | tr -d ' "'"'" || echo "")
+          if [ -n "$ENV_PORT" ]; then
+            NGINX_PORT=$ENV_PORT
+          fi
+        fi
+        
+        echo "Using port: $NGINX_PORT"
+        
+        # Check if port is actually bound
+        echo "=== Port Status ==="
+        netstat -tlnp | grep :$NGINX_PORT || echo "Port $NGINX_PORT not found in netstat"
+        
+        # Check docker port mapping
+        echo "=== Docker Port Mapping ==="
+        docker port $(docker compose -p demo-${{ matrix.environment }} ps -q demo-nginx) || echo "No port mapping found"
+        
+        # Wait longer for container to be fully ready
+        echo "Waiting for container to be fully ready..."
+        for i in {1..30}; do
+          if docker compose -p demo-${{ matrix.environment }} ps demo-nginx | grep -q "Up.*healthy\|Up.*second"; then
+            echo "Container appears to be running (attempt $i)"
+            break
+          fi
+          echo "Waiting for container... (attempt $i/30)"
+          sleep 2
+        done
+        
+        # Check if nginx process is running inside container
+        echo "=== Nginx Process Check ==="
+        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx ps aux | grep nginx || echo "Nginx process check failed"
+        
+        # Try to curl from inside the container first
+        echo "=== Internal Health Check ==="
+        docker compose -p demo-${{ matrix.environment }} exec -T demo-nginx wget -q -O - http://localhost/health || echo "Internal health check failed"
+        
+        # Test health endpoint from host
+        echo "=== External Health Check ==="
+        for i in {1..10}; do
+          if curl -f -m 5 http://localhost:$NGINX_PORT/health; then
+            echo "Health check successful on attempt $i"
+            break
+          else
+            echo "Health check failed on attempt $i, retrying in 3 seconds..."
+            sleep 3
+          fi
+        done
+        
+        # If health check still fails, exit
+        if ! curl -f -m 5 http://localhost:$NGINX_PORT/health; then
+          echo "Health check failed after multiple attempts"
+          echo "=== Final Debug Info ==="
+          docker compose -p demo-${{ matrix.environment }} ps
+          docker compose -p demo-${{ matrix.environment }} logs demo-nginx
+          exit 1
+        fi
+        
+        # Test info endpoint
+        echo "=== Testing Info Endpoint ==="
+        curl -f -m 5 http://localhost:$NGINX_PORT/info || (echo "Info endpoint failed" && exit 1)
+        
+        echo "Deployment verification successful!"
+        echo "Application available at: http://localhost:$NGINX_PORT"
+        
+    - name: Tag successful deployment
+      if: success() && github.event_name == 'push'
+      run: |
+        echo "Tagging successful deployment..."
+        
+        # Create deployment tag
+        DEPLOYMENT_TAG="deploy-${{ matrix.environment }}-$(date +%Y%m%d-%H%M%S)"
+        
+        # Log deployment details
+        echo "Deployment Details:" >> deployment.log
+        echo "Environment: ${{ matrix.environment }}" >> deployment.log
+        echo "Commit: ${{ env.GIT_COMMIT }}" >> deployment.log
+        echo "Time: ${{ env.DEPLOY_TIME }}" >> deployment.log
+        echo "Tag: $DEPLOYMENT_TAG" >> deployment.log
+        echo "Runner: $(hostname)" >> deployment.log
+        echo "---" >> deployment.log
+        
+        echo "Deployment tagged as: $DEPLOYMENT_TAG"
+        
+    - name: Deployment summary
+      if: always()
+      run: |
+        echo "Deployment Summary"
+        echo "=================="
+        echo "Environment: ${{ matrix.environment }}"
+        echo "Status: ${{ job.status }}"
+        echo "Commit: ${{ env.GIT_COMMIT }}"
+        echo "Time: ${{ env.DEPLOY_TIME }}"
+        echo "Runner: $(hostname)"
+        
+        if [ "${{ job.status }}" = "success" ]; then
+          # Get port safely
+          NGINX_PORT=8080  # Default
+          if [ -f ".env.${{ matrix.environment }}" ]; then
+            ENV_PORT=$(grep "^NGINX_PORT=" .env.${{ matrix.environment }} | cut -d'=' -f2 | tr -d ' "'"'" || echo "")
+            if [ -n "$ENV_PORT" ]; then
+              NGINX_PORT=$ENV_PORT
+            fi
+          fi
+          
+          echo "Access your app: http://localhost:$NGINX_PORT"
+          echo "Health check: http://localhost:$NGINX_PORT/health"
+          echo "Info endpoint: http://localhost:$NGINX_PORT/info"
+        fi
