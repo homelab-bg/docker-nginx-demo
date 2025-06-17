@@ -2,7 +2,9 @@
 
 services:
   demo-nginx:
-    build: ./docker
+    build:
+      context: . 
+      dockerfile: docker/Dockerfile 
     container_name: demo-nginx-${ENVIRONMENT:-dev}
     ports:
       - "${NGINX_PORT:-8080}:80"
