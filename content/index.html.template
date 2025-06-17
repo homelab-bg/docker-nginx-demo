@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo App - ${ENVIRONMENT}</title>
+    <link rel="stylesheet" href="/styles.css">
+    <style>
+        :root {
+            --bg-color: ${BACKGROUND_COLOR};
+            --text-color: ${TEXT_COLOR};
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Demo Deployment Success!</h1>
+            <div class="environment-badge ${ENVIRONMENT}">${ENVIRONMENT}</div>
+        </header>
+        
+        <main>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>🌍 Environment</h3>
+                    <p>${ENVIRONMENT}</p>
+                </div>
+                
+                <div class="info-card">
+                    <h3>📦 Version</h3>
+                    <p>${APP_VERSION}</p>
+                </div>
+                
+                <div class="info-card">
+                    <h3>🖥️ Deployment Host</h3>
+                    <p>${DEPLOYMENT_HOST}</p>
+                </div>
+                
+                <div class="info-card">
+                    <h3>🕐 Deploy Time</h3>
+                    <p>${DEPLOY_TIME}</p>
+                </div>
+                
+                <div class="info-card">
+                    <h3>🔗 Git Commit</h3>
+                    <p><code>${GIT_COMMIT}</code></p>
+                </div>
+            </div>
+            
+            <div class="feature-section">
+                <h2>✨ Environment-Specific Features</h2>
+                <div class="feature-message">
+                    ${FEATURE_MESSAGE}
+                </div>
+            </div>
+            
+            <div class="api-section">
+                <h2>🔌 API Endpoints</h2>
+                <div class="api-grid">
+                    <a href="/health" class="api-link">
+                        <strong>/health</strong>
+                        <span>Health check endpoint</span>
+                    </a>
+                    <a href="/info" class="api-link">
+                        <strong>/info</strong>
+                        <span>Deployment information</span>
+                    </a>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>Deployed via GitHub Actions Self-Hosted Runner 🤖</p>
+            <p><small>Container templating demo with environment variables</small></p>
+        </footer>
+    </div>
+</body>
+</html>
